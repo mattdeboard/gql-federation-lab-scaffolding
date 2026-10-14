@@ -84,6 +84,69 @@ These are the cases that make permissions interesting. `npm run seed` prints whi
 
 ---
 
+## Levels
+
+Work through these in order. `LEVEL=n npm run dev` runs Levels 0 through n. Each subgraph starts as a stub (it logs `schema.graphql is still a stub` and exits), and composition fails until you've written the schemas for that Level.
+
+- **Level 0:** `users` + `daily-logs`. Composition, `@key`, `__resolveReference`, reading the query plan.
+- **Level 1:** `notes`. Extending an entity another subgraph owns; watching `_entities` in the logs.
+- **Level 2:** `photos` + `comments`. Run the view naively, count SQL statements, then fix N+1 with dataloaders. Write up before/after counts.
+- **Level 3:** `auth`. Header propagation (already configured in `router/router.yaml`), `Query.me`.
+- **Level 4:** `permissions`. Where authorization belongs in a federated graph. Compare approaches.
+- **Level 5:** `weather`. `@external` / `@requires`, and the extra sequential plan step it causes.
+- **Level 6:** `crews`. Repetition to confirm the patterns stuck.
+
+### Stretch goals (tie back to the NFRs)
+
+- `@defer` the slow weather block (high-latency jobsite tablets)
+- Persisted queries
+- Write-up of a client-side offline story (cached log, queued mutations)
+- `k6` load test: steady traffic plus an end-of-day burst of note writes (the operations it sends come from `queries/`)
+- Split one subgraph into its own repo and compose from a GraphOS registry instead of local files
+
+---
+
+## Running
+
+Prerequisites: Node 24 (`.nvmrc`) and [rover](https://www.apollographql.com/docs/rover/getting-started).
+
+```bash
+nvm use               # Node 24 (from .nvmrc)
+npm install
+cp .env.example .env  # accepts Apollo's ELv2 license for local rover; sets the weather delay
+npm run rover:install # once per machine: rover's router + composition plugins
+npm run seed          # create and seed every database; prints which Bearer token is which persona
+npm run seed -- notes # reseed only the named subgraph(s); the rest keep their data
+npm run dev           # subgraphs for LEVEL=0 + rover dev (router on :4000)
+LEVEL=2 npm run dev   # Levels 0 through 2
+npm run dev:log       # same as dev, also writes logs/dev.log
+```
+
+Manual testing in Apollo Sandbox at `http://localhost:4000` with:
+
+```json
+{
+  "Authorization": "Bearer user-1",
+  "Apollo-Expose-Query-Plan": "true"
+}
+```
+
+Run a saved operation from `queries/` and see its plan, response, and the SQL/`_entities` lines it caused:
+
+```bash
+npm run op -- queries/<name>.graphql --as user-2 --vars '{"id": "log-1"}'
+```
+
+Variables default to a sibling `<name>.variables.json`; `--as none` sends no `Authorization` header. The log section needs `npm run dev:log` running.
+
+Each subgraph is independently startable: `npm run dev -w subgraphs/notes`.
+
+The production-like path: `LEVEL=n npm run compose` composes `router/supergraph.graphql` with rover (LEVEL defaults to 6); `LEVEL=n npm run compose -- run` also starts the standalone router against it.
+
+Before committing: `npm run check` (typecheck, lint, format check). When you write a subgraph's schema, delete its line from `.prettierignore` so Prettier formats it.
+
+---
+
 ## Architecture
 
 ```
@@ -197,67 +260,3 @@ Deterministic (fixed IDs; any randomness uses a fixed seed):
 - crew members are users with **no** `project_memberships` rows (the "just added" persona)
 
 The databases aren't checked in. `npm run seed` creates them and prints which `Bearer` token is which persona.
-
----
-
-## Levels
-
-Work through these in order. `LEVEL=n npm run dev` runs Levels 0 through n. Each subgraph starts as a stub (it logs `schema.graphql is still a stub` and exits), and composition fails until you've written the schemas for that Level.
-
-- **Level 0:** `users` + `daily-logs`. Composition, `@key`, `__resolveReference`, reading the query plan.
-- **Level 1:** `notes`. Extending an entity another subgraph owns; watching `_entities` in the logs.
-- **Level 2:** `photos` + `comments`. Run the view naively, count SQL statements, then fix N+1 with dataloaders. Write up before/after counts.
-- **Level 3:** `auth`. Header propagation (already configured in `router/router.yaml`), `Query.me`.
-- **Level 4:** `permissions`. Where authorization belongs in a federated graph. Compare approaches.
-- **Level 5:** `weather`. `@external` / `@requires`, and the extra sequential plan step it causes.
-- **Level 6:** `crews`. Repetition to confirm the patterns stuck.
-
-### Stretch goals (tie back to the NFRs)
-
-- `@defer` the slow weather block (high-latency jobsite tablets)
-- Persisted queries
-- Write-up of a client-side offline story (cached log, queued mutations)
-- `k6` load test: steady traffic plus an end-of-day burst of note writes (the operations it sends come from `queries/`)
-- Split one subgraph into its own repo and compose from a GraphOS registry instead of local files
-
----
-
-## Running
-
-Prerequisites: Node 24 (`.nvmrc`) and [rover](https://www.apollographql.com/docs/rover/getting-started).
-
-```bash
-nvm use               # Node 24 (from .nvmrc)
-npm install
-npm run rover:install # once per machine: rover's router + composition plugins
-npm run seed          # create and seed every database; prints which Bearer token is which persona
-npm run seed -- notes # reseed only the named subgraph(s); the rest keep their data
-npm run dev           # subgraphs for LEVEL=0 + rover dev (router on :4000)
-LEVEL=2 npm run dev   # Levels 0 through 2
-npm run dev:log       # same as dev, also writes logs/dev.log
-```
-
-Local `rover` composition requires accepting Apollo's ELv2 license: put `APOLLO_ELV2_LICENSE=accept` in `.env`.
-
-Manual testing in Apollo Sandbox at `http://localhost:4000` with:
-
-```json
-{
-  "Authorization": "Bearer user-1",
-  "Apollo-Expose-Query-Plan": "true"
-}
-```
-
-Run a saved operation from `queries/` and see its plan, response, and the SQL/`_entities` lines it caused:
-
-```bash
-npm run op -- queries/<name>.graphql --as user-2 --vars '{"id": "log-1"}'
-```
-
-Variables default to a sibling `<name>.variables.json`; `--as none` sends no `Authorization` header. The log section needs `npm run dev:log` running.
-
-Each subgraph is independently startable: `npm run dev -w subgraphs/notes`.
-
-The production-like path: `LEVEL=n npm run compose` composes `router/supergraph.graphql` with rover (LEVEL defaults to 6); `LEVEL=n npm run compose -- run` also starts the standalone router against it.
-
-Before committing: `npm run check` (typecheck, lint, format check). When you write a subgraph's schema, delete its line from `.prettierignore` so Prettier formats it.
