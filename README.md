@@ -24,26 +24,59 @@ If you work with an AI coding assistant, [`CLAUDE.md`](CLAUDE.md) tells it this 
 
 ## The scenario
 
-A superintendent ("supe") opens a single **Daily Log** for one of their projects on a tablet at the jobsite. One GraphQL operation should hydrate the whole view:
+You've just joined the platform team at **Groundwork**, a (fictional) construction-management SaaS in the vein of Procore. General contractors use Groundwork to run their building projects: schedules, drawings, budgets, inspections, photos, and the paperwork that holds it all together. Your team's job is the GraphQL API that every Groundwork client talks to. Your first assignment is the feature superintendents use more than any other: the **Daily Log**.
+
+### What a Daily Log is
+
+On a construction project, the daily log (also called a daily report) is the official record of what happened on site that day: who was there, what work got done, what the weather was, what went wrong, and photos to prove it. The superintendent writes one every working day.
+
+It reads like a diary, but it's closer to a legal document. Months later, when the owner disputes a change order or the schedule slips, the daily logs are what everyone goes back to. "Rain and 25 mph gusts stopped the crane on October 9th" is what justifies a schedule extension, and a photo of the rebar before the pour is what settles an argument about whether the inspection happened. Logs move from `DRAFT` to `SUBMITTED` to `APPROVED`, and an approved log is the version of record.
+
+### Who uses it
+
+- **The superintendent ("supe")** runs one jobsite and writes its daily log, usually on a tablet in the site trailer, in gloves, with spotty LTE. In the seed data, that's Dana (`user-1`) on Riverside Medical Office in Portland and Marco (`user-2`) on Desert Ridge Elementary in Phoenix.
+- **The project manager** works out of the office across several projects and reads logs to track progress and spot problems early. Priya (`user-3`) manages both projects.
+- **The owner's representative** watches on behalf of whoever is paying for the building, with read-only access. Tom (`user-4`) is a viewer on Riverside.
+- **Trade crews** (concrete, electrical, framing, plumbing) do the work. Foremen upload photos and comment on them. Crews get added to a project's roster on the morning they show up, usually before anyone has granted them permissions.
+- **Consultants** such as structural engineers drop in, comment on photos, and roll off the project. Their old comments stay behind after their access is gone. Grant (`user-9`) is one of them.
+
+### The view you're building
+
+The supe opens one day's log on the tablet. One GraphQL operation should hydrate the whole screen:
 
 - the log itself (date, status, project, who created it)
-- observed weather for that day
+- observed weather for that day, plus a forecast summary
 - the project's crew
 - notes written on the log
-- photos taken that day, each with its comments and comment authors
+- photos taken that day, each with its uploader, comments, and comment authors
+
+### Why it's federated
+
+Groundwork started as a monolith and has been split up the usual way, one team and one service at a time. The data for that one screen now lives in nine services, each owned by a different team, each with its own database:
+
+- **users** is the identity directory everyone shares.
+- **auth** knows who is calling, and nothing else.
+- **permissions** is owned by the security team, which also exposes an internal REST endpoint other services call to check access, the way access services often predate the graph.
+- **daily-logs** is the original core service. It still holds `projects` because nobody has carved out a Projects service yet.
+- **weather** wraps a third-party forecast vendor, and it's slow, because the vendor is slow.
+- **crews**, **notes**, **photos** and **comments** each belong to a feature team that ships on its own schedule.
+
+None of these teams will merge their databases for you, and none of them wants to read anyone else's code. Federation is how the API still looks like one graph from the client: each team publishes a subgraph for its own domain, and the router stitches them together at query time. Your job is to design those subgraphs so the Daily Log view works and stays fast, correct, and secure, while the data stays split across nine teams.
 
 ### Functional requirements
 
-1. Fetch a single Daily Log in one operation to hydrate the view.
-2. Support low/no-connectivity, high-latency environments.
-3. Respect permissions: a supe sees their projects and only their projects.
+1. Fetch a single Daily Log in one operation to hydrate the view. A tablet on a jobsite can't afford a waterfall of round trips.
+2. Support low/no-connectivity, high-latency environments. The slow weather block shouldn't hold up the rest of the screen.
+3. Respect permissions: a supe sees their projects and only their projects. Seeing a user's name on a comment doesn't mean that user can see the project.
 
 ### Non-functional requirements
 
-- End-of-day burstiness (everyone submits logs ~4–6pm local)
-- Steady all-day traffic otherwise
+- End-of-day burstiness: crews wrap up around 3:30, and every supe submits their log between about 4 and 6pm local time, so writes arrive in a spike.
+- Steady all-day traffic otherwise: PMs and owner's reps reading logs, foremen uploading photos.
 
 ### Personas (the seed data covers all three)
+
+These are the cases that make permissions interesting. `npm run seed` prints which `Bearer` token belongs to each.
 
 - **Author**: the supe; has project permissions.
 - **Crew**: users just added to a project's crew; they exist as users but have **no** project permissions.
