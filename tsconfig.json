@@ -1,0 +1,26 @@
+{
+  // Type-checking only. Node 24 runs the .ts files directly by stripping types,
+  // so nothing is ever compiled to JS. `npm run typecheck` runs this.
+  "compilerOptions": {
+    "module": "nodenext",
+    "target": "esnext",
+    "types": ["node"],
+    "noEmit": true,
+
+    // Required for Node's built-in type stripping:
+    // - imports must spell out the .ts extension
+    // - no TS-only runtime syntax (enums, namespaces, parameter properties)
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  },
+  "include": ["shared", "subgraphs", "scripts"]
+}
